@@ -560,74 +560,9 @@ export class MessageElement extends Element {
       return;
     }
 
-    if (part.$element) {
-      let lookupTypes: any[] = [];
-
+    if (part.$element && children.length < 2) {
       delete this.parts;
-
-      const nsName = splitQName(part.$element);
-      const ns = nsName.prefix;
-      let schema = definitions.schemas[definitions.xmlns[ns]];
-      this.element = schema.elements[nsName.name];
-      if (!this.element) {
-        debug(nsName.name + ' is not present in wsdl and cannot be processed correctly.');
-        return;
-      }
-      this.element.targetNSAlias = ns;
-      this.element.targetNamespace = definitions.xmlns[ns];
-
-      // set the optional $lookupType to be used within `client#_invoke()` when
-      // calling `wsdl#objectToDocumentXML()
-      this.element.$lookupType = part.$element;
-
-      const elementChildren = this.element.children;
-
-      // get all nested lookup types (only complex types are followed)
-      if (elementChildren.length > 0) {
-        for (const child of elementChildren) {
-          lookupTypes.push(this._getNestedLookupTypeString(child));
-        }
-      }
-
-      // if nested lookup types where found, prepare them for furter usage
-      if (lookupTypes.length > 0) {
-        lookupTypes = lookupTypes.
-          join('_').
-          split('_').
-          filter(function removeEmptyLookupTypes(type) {
-            return type !== '^';
-          });
-
-        const schemaXmlns = definitions.schemas[this.element.targetNamespace].xmlns;
-
-        for (let i = 0; i < lookupTypes.length; i++) {
-          lookupTypes[i] = this._createLookupTypeObject(lookupTypes[i], schemaXmlns);
-        }
-      }
-
-      this.element.$lookupTypes = lookupTypes;
-
-      if (this.element.$type) {
-        const type = splitQName(this.element.$type);
-        const typeNs = schema.xmlns && schema.xmlns[type.prefix] || definitions.xmlns[type.prefix];
-
-        if (typeNs) {
-          if (type.name in Primitives) {
-              // this.element = this.element.$type;
-          } else {
-            // first check local mapping of ns alias to namespace
-            schema = definitions.schemas[typeNs];
-            const ctype = schema.complexTypes[type.name] || schema.types[type.name] || schema.elements[type.name];
-
-            if (ctype) {
-              this.parts = ctype.description(definitions, schema.xmlns);
-            }
-          }
-        }
-      } else {
-        const method = this.element.description(definitions, schema.xmlns);
-        this.parts = method[nsName.name];
-      }
+      [this.parts, this.element] = this._qualifyElementPart(definitions, part)
 
       this.children.splice(0, 1);
     } else {
@@ -640,19 +575,23 @@ export class MessageElement extends Element {
           continue;
         }
         assert(part.name === 'part', 'Expected part element');
-        const nsName = splitQName(part.$type);
-        const ns = definitions.xmlns[nsName.prefix];
-        const type = nsName.name;
-        const schemaDefinition = definitions.schemas[ns];
-        if (typeof schemaDefinition !== 'undefined') {
-          this.parts[part.$name] = definitions.schemas[ns].types[type] || definitions.schemas[ns].complexTypes[type];
-        } else {
-          this.parts[part.$name] = part.$type;
-        }
+        if (part.$type) {
+          const nsName = splitQName(part.$type);
+          const ns = definitions.xmlns[nsName.prefix];
+          const type = nsName.name;
+          const schemaDefinition = definitions.schemas[ns];
+          if (typeof schemaDefinition !== 'undefined') {
+            this.parts[part.$name] = definitions.schemas[ns].types[type] || definitions.schemas[ns].complexTypes[type];
+          } else {
+            this.parts[part.$name] = part.$type;
+          }
 
-        if (typeof this.parts[part.$name] === 'object') {
-          this.parts[part.$name].prefix = nsName.prefix;
-          this.parts[part.$name].xmlns = ns;
+          if (typeof this.parts[part.$name] === 'object') {
+            this.parts[part.$name].prefix = nsName.prefix;
+            this.parts[part.$name].xmlns = ns;
+          }
+        } else if (part.$element) {
+          [this.parts[part.$name]] = this._qualifyElementPart(definitions, part)
         }
 
         this.children.splice(i--, 1);
@@ -694,6 +633,76 @@ export class MessageElement extends Element {
       $name: name,
     };
   }
+
+
+  private _qualifyElementPart(definitions: DefinitionsElement, part: any) : [any, any] {
+    let lookupTypes: any[] = [];
+
+    const nsName = splitQName(part.$element);
+    const ns = nsName.prefix;
+    let schema = definitions.schemas[definitions.xmlns[ns]];
+    const element = schema.elements[nsName.name];
+    if (!element) {
+      debug(nsName.name + ' is not present in wsdl and cannot be processed correctly.');
+      return;
+    }
+    element.targetNSAlias = ns;
+    element.targetNamespace = definitions.xmlns[ns];
+
+    // set the optional $lookupType to be used within `client#_invoke()` when
+    // calling `wsdl#objectToDocumentXML()
+    element.$lookupType = part.$element;
+
+    const elementChildren = element.children;
+
+    // get all nested lookup types (only complex types are followed)
+    if (elementChildren.length > 0) {
+      for (const child of elementChildren) {
+        lookupTypes.push(this._getNestedLookupTypeString(child));
+      }
+    }
+
+    // if nested lookup types where found, prepare them for further usage
+    if (lookupTypes.length > 0) {
+      lookupTypes = lookupTypes.
+      join('_').
+      split('_').
+      filter(function removeEmptyLookupTypes(type) {
+        return type !== '^';
+      });
+
+      const schemaXmlns = definitions.schemas[element.targetNamespace].xmlns;
+
+      for (let i = 0; i < lookupTypes.length; i++) {
+        lookupTypes[i] = this._createLookupTypeObject(lookupTypes[i], schemaXmlns);
+      }
+    }
+
+    element.$lookupTypes = lookupTypes;
+
+    if (element.$type) {
+      const type = splitQName(element.$type);
+      const typeNs = schema.xmlns && schema.xmlns[type.prefix] || definitions.xmlns[type.prefix];
+
+      if (typeNs) {
+        if (type.name in Primitives) {
+          // this.element = this.element.$type;
+        } else {
+          // first check local mapping of ns alias to namespace
+          schema = definitions.schemas[typeNs];
+          const ctype = schema.complexTypes[type.name] || schema.types[type.name] || schema.elements[type.name];
+
+          if (ctype) {
+            return [ctype.description(definitions, schema.xmlns), element];
+          }
+        }
+      }
+    } else {
+      const method = element.description(definitions, schema.xmlns);
+      return [method[nsName.name], element];
+    }
+  }
+
 
   /**
    * Iterates through the element and every nested child to find any defined `$type`
