@@ -559,13 +559,13 @@ export class MessageElement extends Element {
     if (!part) {
       return;
     }
-
-    if (part.$element && children.length < 2) {
-      delete this.parts;
-      [this.parts, this.element] = this._qualifyElementPart(definitions, part)
-
-      this.children.splice(0, 1);
-    } else {
+    //
+    // if (part.$element && children.length < 2) {
+    //   delete this.parts;
+    //   [this.parts, this.element] = this._qualifyElementPart(definitions, part)
+    //
+    //   this.children.splice(0, 1);
+    // } else {
       // rpc encoding
       this.parts = {};
       delete this.element;
@@ -596,7 +596,7 @@ export class MessageElement extends Element {
 
         this.children.splice(i--, 1);
       }
-    }
+    // }
     this.deleteFixedAttrs();
   }
 
