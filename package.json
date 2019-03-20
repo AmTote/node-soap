@@ -30,14 +30,14 @@
     "test": "./test"
   },
   "scripts": {
-    "prepare": "npm run build",
+    "prepare": "yarn build",
     "build": "tsc -p .",
     "clean": "rm -rf lib",
     "watch": "tsc -w -p .",
     "lint": "tslint -p tsconfig.json",
-    "toc": "./node_modules/.bin/doctoc Readme.md --github --maxlevel 3",
+    "toc": "doctoc Readme.md --github --maxlevel 3",
     "cover": "nyc --reporter=lcov --reporter=html --reporter=text mocha --timeout 15000 --exit test/*-test.js test/security/*.js",
-    "coveralls": "cat ./coverage/lcov.info | ./node_modules/coveralls/bin/coveralls.js -v",
+    "coveralls": "cat ./coverage/lcov.info | coveralls -v",
     "docs": "typedoc --out docs",
     "test": "mocha --timeout 15000 --bail --exit test/*-test.js test/security/*.js"
   },
@@ -72,8 +72,8 @@
     "sinon": "^1.17.7",
     "source-map-support": "^0.5.10",
     "timekeeper": "^2.1.2",
-    "tslint": "^5.13.1",
+    "tslint": "^5.12.0",
     "typedoc": "^0.14.2",
-    "typescript": "^3.3.3333"
+    "typescript": "^3.1.1"
   }
 }
