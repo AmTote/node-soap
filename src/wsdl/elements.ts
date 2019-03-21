@@ -225,7 +225,7 @@ export class ElementElement extends Element {
 
           let elem: any = {};
           definitions.descriptions.types[typeName] = elem;
-          const description = typeElement.description(definitions, xmlns);
+          const description = (<Element>typeElement).description(definitions, xmlns);
           if (typeof description === 'string') {
             elem = description;
           } else {
@@ -262,7 +262,7 @@ export class ElementElement extends Element {
       element[name] = {};
       for (const child of children) {
         if (child instanceof ComplexTypeElement || child instanceof SimpleTypeElement) {
-          element[name] = child.description(definitions, xmlns);
+          element[name] = (<Element>child).description(definitions, xmlns);
         }
       }
     }
@@ -364,7 +364,7 @@ export class RestrictionElement extends Element {
       const typeElement = schema && ( schema.complexTypes[typeName] || schema.types[typeName] || schema.elements[typeName] );
 
       desc.getBase = () => {
-        return typeElement.description(definitions, schema.xmlns);
+        return (<Element>typeElement).description(definitions, schema.xmlns);
       };
       return desc;
     }
@@ -407,7 +407,7 @@ export class ExtensionElement extends Element {
           schema.types[typeName] || schema.elements[typeName] );
 
         if (typeElement) {
-          const base = typeElement.description(definitions, schema.xmlns);
+          const base = (<Element>typeElement).description(definitions, schema.xmlns);
           desc = _.defaultsDeep(base, desc);
         }
       }
@@ -693,7 +693,7 @@ export class MessageElement extends Element {
           const ctype = schema.complexTypes[type.name] || schema.types[type.name] || schema.elements[type.name];
 
           if (ctype) {
-            return [ctype.description(definitions, schema.xmlns), element];
+            return [(<Element>ctype).description(definitions, schema.xmlns), element];
           }
         }
       }
@@ -771,7 +771,7 @@ export class SchemaElement extends Element {
 
     // Merge attributes from source without overwriting our's
     _.merge(this, _.pickBy(source, (value, key) => {
-      return key.startsWith('$') && !this.hasOwnProperty(key);
+      return key.indexOf('$') === 0 && !this.hasOwnProperty(key);
     }));
 
     return this;
