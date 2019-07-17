@@ -47,6 +47,7 @@ export interface Client {
 
 export class Client extends EventEmitter {
   [method: string]: any;
+
   /** contains last full soap request for client logging */
   public lastRequest?: string;
   public lastMessage?: string;
@@ -66,19 +67,20 @@ export class Client extends EventEmitter {
   private SOAPAction: string;
   private streamAllowed: boolean;
   private normalizeNames: boolean;
+  private readonly overridePromiseSuffix: string;
 
   constructor(wsdl: WSDL, endpoint?: string, options?: IOptions) {
     super();
     options = options || {};
     this.wsdl = wsdl;
+
+    if (options.overridePromiseSuffix) {
+      this.overridePromiseSuffix = options.overridePromiseSuffix;
+    }
+
     this._initializeOptions(options);
     this._initializeServices(endpoint);
     this.httpClient = options.httpClient || new HttpClient(options);
-    const promiseOptions: BluebirdPromise.PromisifyAllOptions<this> = { multiArgs: true };
-    if (options.overridePromiseSuffix) {
-      promiseOptions.suffix = options.overridePromiseSuffix;
-    }
-    BluebirdPromise.promisifyAll(this, promiseOptions);
   }
 
   /** add soapHeader to soap:Header node */
@@ -174,7 +176,8 @@ export class Client extends EventEmitter {
     const definitions = this.wsdl.definitions;
     const services = definitions.services;
     for (const name in services) {
-      this[name] = this._defineService(services[name], endpoint);
+      const service: any = this._defineService(services[name], endpoint);
+      this[name] = service;
     }
   }
 
@@ -219,7 +222,9 @@ export class Client extends EventEmitter {
     for (const name in methods) {
       def[name] = this._defineMethod(methods[name], location);
       const methodName = this.normalizeNames ? name.replace(nonIdentifierChars, '_') : name;
-      this[methodName] = def[name];
+      const method = def[name];
+      this[methodName] = method;
+      this[methodName + (this.overridePromiseSuffix || 'Async')] = BluebirdPromise.promisify(method, {multiArgs: true});
     }
     return def;
   }
