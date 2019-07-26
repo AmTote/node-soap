@@ -6,12 +6,12 @@
 /*jshint proto:true*/
 
 import { ok as assert } from 'assert';
-import * as debugBuilder from 'debug';
+import debugBuilder from 'debug';
 import * as fs from 'fs';
 import * as _ from 'lodash';
 import * as path from 'path';
 import * as sax from 'sax';
-import * as stripBom from 'strip-bom';
+import stripBom from 'strip-bom';
 import * as url from 'url';
 import { HttpClient } from '../http';
 import { NamespaceContext } from '../nscontext';

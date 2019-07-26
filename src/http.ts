@@ -3,9 +3,9 @@
  * MIT Licensed
  */
 
-import * as debugBuilder from 'debug';
-import * as httpNtlm from 'httpntlm';
-import * as req from 'request';
+import debugBuilder from 'debug';
+import httpNtlm from 'httpntlm';
+import req from 'request';
 import * as url from 'url';
 import { IHeaders, IOptions } from './types';
 

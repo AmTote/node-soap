@@ -4,9 +4,9 @@
  */
 
 import * as assert from 'assert';
-import * as BluebirdPromise from 'bluebird';
+import BluebirdPromise from 'bluebird';
 import * as concatStream from 'concat-stream';
-import * as debugBuilder from 'debug';
+import debugBuilder from 'debug';
 import { EventEmitter } from 'events';
 import { IncomingHttpHeaders } from 'http';
 import * as _ from 'lodash';

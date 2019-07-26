@@ -3,8 +3,8 @@
  * MIT Licensed
  */
 
-import * as BluebirdPromise from 'bluebird';
-import * as debugBuilder from 'debug';
+import BluebirdPromise from 'bluebird';
+import debugBuilder from 'debug';
 import { Client } from './client';
 import * as _security from './security';
 import { Server, ServerType } from './server';
