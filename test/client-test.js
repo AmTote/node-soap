@@ -905,6 +905,16 @@ var fs = require('fs'),
         });
       });
 
+      it('shall accept a wsdl with no wsdl:input', function (done) {
+        soap.createClient(__dirname + '/wsdl/no_input_on_operation.wsdl', function(err, client) {
+          assert.ok(client);
+          client.MyOperation(null, function(err, result) {
+            assert.ok(client.lastRequest);
+            done();
+          });
+        });
+      })
+
       it('shall generate correct payload for methods with array parameter with colon override', function (done) {
         soap.createClient(__dirname + '/wsdl/array_namespace_override.wsdl', function(err, client) {
           assert.ok(client);
