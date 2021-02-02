@@ -51,11 +51,14 @@ function getDateString(d) {
 export interface Server {
   emit(event: 'request', request: any, methodName: string): boolean;
   emit(event: 'headers', headers: any, methodName: string): boolean;
+  emit(event: 'response', headers: any, methodName: string): boolean;
 
   /** Emitted for every received messages. */
   on(event: 'request', listener: (request: any, methodName: string) => void): this;
   /** Emitted when the SOAP Headers are not empty. */
   on(event: 'headers', listener: (headers: any, methodName: string) => void): this;
+  /** Emitted before sending SOAP response. */
+  on(event: 'response', listener: (response: any, methodName: string) => void): this;
 }
 
 interface IExecuteMethodOptions {
@@ -73,7 +76,7 @@ export class Server extends EventEmitter {
   public services: IServices;
   public log: (type: string, data: any) => any;
   public authorizeConnection: (req: Request, res?: Response) => boolean;
-  public authenticate: (security: ISecurity, processAuthResult?) => boolean;
+  public authenticate: (security: any, processAuthResult?: (result: boolean) => void, req?: Request, obj?: any) => boolean | void | Promise<boolean>;
 
   private wsdl: WSDL;
   private suppressStack: boolean;
@@ -81,6 +84,7 @@ export class Server extends EventEmitter {
   private onewayOptions: IOneWayOptions & { statusCode?: number; };
   private enableChunkedEncoding: boolean;
   private soapHeaders: any[];
+  private callback?: (err: any, res: any) => void;
 
   constructor(server: ServerType, path: string, services: IServices, wsdl: WSDL, options?: IServerOptions) {
     super();
@@ -97,7 +101,7 @@ export class Server extends EventEmitter {
     this.onewayOptions = options && options.oneWay || {};
     this.enableChunkedEncoding =
       options.enableChunkedEncoding === undefined ? true : !!options.enableChunkedEncoding;
-
+    this.callback = options.callback ? options.callback : () => { };
     if (path[path.length - 1] !== '/') {
       path += '/';
     }
@@ -113,6 +117,7 @@ export class Server extends EventEmitter {
           }
           this._requestListener(req, res);
         });
+        this.callback(err, this);
       } else {
         const listeners = server.listeners('request').slice();
         server.removeAllListeners('request');
@@ -135,6 +140,7 @@ export class Server extends EventEmitter {
             }
           }
         });
+        this.callback(err, this);
       }
     });
 
@@ -199,7 +205,7 @@ export class Server extends EventEmitter {
       if (typeof this.log === 'function') {
         this.log('received', xml);
       }
-      this._process(xml, req, (result, statusCode) => {
+      this._process(xml, req, res, (result, statusCode) => {
         this._sendHttpResponse(res, statusCode, result);
         if (typeof this.log === 'function') {
           this.log('replied', result);
@@ -233,7 +239,8 @@ export class Server extends EventEmitter {
     }
 
     if (req.method === 'GET') {
-      if (reqQuery && reqQuery.toLowerCase() === '?wsdl') {
+
+      if (reqQuery && reqQuery.toLowerCase().startsWith('?wsdl')) {
         if (typeof this.log === 'function') {
           this.log('info', 'Wants the WSDL');
         }
@@ -274,7 +281,7 @@ export class Server extends EventEmitter {
     }
   }
 
-  private _process(input, req: Request, callback: (result: any, statusCode?: number) => any) {
+  private _process(input, req: Request, res: Response, cb: (result: any, statusCode?: number) => any) {
     const pathname = url.parse(req.url).pathname.replace(/\/$/, '');
     const obj = this.wsdl.xmlToObject(input);
     const body = obj.Body;
@@ -285,6 +292,12 @@ export class Server extends EventEmitter {
     let portName: string;
     const includeTimestamp = obj.Header && obj.Header.Security && obj.Header.Security.Timestamp;
     const authenticate = this.authenticate || function defaultAuthenticate() { return true; };
+
+    const callback = (result, statusCode) => {
+      const response = { result: result };
+      this.emit('response', response, methodName);
+      cb(response.result, statusCode);
+    };
 
     const process = () => {
 
@@ -335,7 +348,7 @@ export class Server extends EventEmitter {
 
       try {
         if (binding.style === 'rpc') {
-          methodName = Object.keys(body)[0];
+          methodName = (Object.keys(body)[0] === 'attributes' ? Object.keys(body)[1] : Object.keys(body)[0]);
 
           this.emit('request', obj, methodName);
           if (headers) {
@@ -350,7 +363,7 @@ export class Server extends EventEmitter {
             args: body[methodName],
             headers: headers,
             style: 'rpc',
-          }, req, callback);
+          }, req, res, callback);
         } else {
           const messageElemName = (Object.keys(body)[0] === 'attributes' ? Object.keys(body)[1] : Object.keys(body)[0]);
           const pair = binding.topElements[messageElemName];
@@ -360,6 +373,8 @@ export class Server extends EventEmitter {
             this.emit('headers', headers, pair.methodName);
           }
 
+          methodName = pair.methodName;
+
           this._executeMethod({
             serviceName: serviceName,
             portName: portName,
@@ -368,7 +383,7 @@ export class Server extends EventEmitter {
             args: body[messageElemName],
             headers: headers,
             style: 'document',
-          }, req, callback, includeTimestamp);
+          }, req, res, callback, includeTimestamp);
         }
       } catch (error) {
         if (error.Fault !== undefined) {
@@ -382,10 +397,27 @@ export class Server extends EventEmitter {
     // Authentication
     if (typeof authenticate === 'function') {
       let authResultProcessed = false;
-      const processAuthResult = (authResult) => {
-        if (!authResultProcessed && (authResult || authResult === false)) {
-          authResultProcessed = true;
-          if (authResult) {
+      const processAuthResult = (authResult: boolean | Error) => {
+        if (authResultProcessed) {
+          return;
+        }
+
+        authResultProcessed = true;
+        // Handle errors
+        if (authResult instanceof Error) {
+          return this._sendError({
+            Code: {
+              Value: 'SOAP-ENV:Server',
+              Subcode: { value: 'InternalServerError' },
+            },
+            Reason: { Text: authResult.toString() },
+            statusCode: 500,
+          }, callback, includeTimestamp);
+        }
+
+        // Handle actual results
+        if (typeof authResult === 'boolean') {
+          if (authResult === true) {
             try {
               process();
             } catch (error) {
@@ -414,7 +446,17 @@ export class Server extends EventEmitter {
         }
       };
 
-      processAuthResult(authenticate(obj.Header && obj.Header.Security, processAuthResult));
+      const functionResult = authenticate(obj.Header && obj.Header.Security, processAuthResult, req, obj);
+      if (isPromiseLike<boolean>(functionResult)) {
+        functionResult.then((result: boolean) => {
+          processAuthResult(result);
+        }, (err: any) => {
+          processAuthResult(err);
+        });
+      }
+      if (typeof functionResult === 'boolean') {
+        processAuthResult(functionResult);
+      }
     } else {
       throw new Error('Invalid authenticate function (not a function)');
     }
@@ -423,6 +465,7 @@ export class Server extends EventEmitter {
   private _executeMethod(
     options: IExecuteMethodOptions,
     req: Request,
+    res: Response,
     callback: (result: any, statusCode?: number) => any,
     includeTimestamp?,
   ) {
@@ -440,7 +483,7 @@ export class Server extends EventEmitter {
     if (this.soapHeaders) {
       headers = this.soapHeaders.map((header) => {
         if (typeof header === 'function') {
-          return header(methodName, args, options.headers, req);
+          return header(methodName, args, options.headers, req, res, this);
         } else {
           return header;
         }
@@ -505,7 +548,7 @@ export class Server extends EventEmitter {
       handleResult(error, result);
     };
 
-    const result = method(args, methodCallback, options.headers, req);
+    const result = method(args, methodCallback, options.headers, req, res, this);
     if (typeof result !== 'undefined') {
       if (isPromiseLike<any>(result)) {
         result.then((value) => {

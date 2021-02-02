@@ -45,7 +45,7 @@ test.service = {
             }
           };
         } else {
-          return { price: 19.56 };
+          return { price: 19.56, tax: -1.23, other: 20.001 };
         }
       },
 
@@ -256,7 +256,7 @@ describe('SOAP Server', function() {
     soap.createClient(test.baseUrl + '/stockquote?wsdl', function(err, client) {
       assert.ifError(err);
       var description = client.describe(),
-          expected = { input: { tickerSymbol: "string" }, output:{ price: "float" } };
+          expected = { input: { tickerSymbol: "string" }, output:{ price: "float", tax: "double", other: "decimal" } };
       assert.deepEqual(expected , description.StockQuoteService.StockQuotePort.GetLastTradePrice);
       done();
     });
@@ -267,7 +267,9 @@ describe('SOAP Server', function() {
       assert.ifError(err);
       client.GetLastTradePrice({ tickerSymbol: 'AAPL'}, function(err, result) {
         assert.ifError(err);
-        assert.equal(19.56, parseFloat(result.price));
+        assert.strictEqual(19.56, result.price); // float
+        assert.strictEqual(-1.23, result.tax); // double
+        assert.strictEqual(20.001, result.other); // decimal
         done();
       });
     });
@@ -278,7 +280,7 @@ describe('SOAP Server', function() {
       assert.ifError(err);
       client.GetLastTradePrice({ tickerSymbol: 'Async'}, function(err, result) {
         assert.ifError(err);
-        assert.equal(19.56, parseFloat(result.price));
+        assert.strictEqual(19.56, result.price);
         done();
       });
     });
@@ -301,7 +303,7 @@ describe('SOAP Server', function() {
       assert.ifError(err);
       client.GetLastTradePrice({ tickerSymbol: 'Promise'}, function(err, result) {
         assert.ifError(err);
-        assert.equal(13.76, parseFloat(result.price));
+        assert.strictEqual(13.76, result.price);
         done();
       });
     });
@@ -349,7 +351,7 @@ describe('SOAP Server', function() {
       client.addSoapHeader('<SomeToken>123.45</SomeToken>');
       client.GetLastTradePrice({ tickerSymbol: 'AAPL'}, function(err, result) {
         assert.ifError(err);
-        assert.equal(123.45, parseFloat(result.price));
+        assert.strictEqual(123.45, result.price);
         done();
       });
     });
@@ -378,6 +380,17 @@ describe('SOAP Server', function() {
     });
   });
 
+  it('should emit \'response\' event', function(done) {
+    test.soapServer.on('response', function requestManager(request, methodName) {
+      assert.equal(methodName, 'GetLastTradePrice');
+      done();
+    });
+    soap.createClient(test.baseUrl + '/stockquote?wsdl', function(err, client) {
+      assert.ifError(err);
+      client.GetLastTradePrice({ tickerSymbol: 'AAPL'}, function() {});
+    });
+  });
+
   it('should emit \'headers\' event', function(done) {
     test.soapServer.on('headers', function headersManager(headers, methodName) {
       assert.equal(methodName, 'GetLastTradePrice');
@@ -388,7 +401,7 @@ describe('SOAP Server', function() {
       client.addSoapHeader('<SomeToken>123.45</SomeToken>');
       client.GetLastTradePrice({ tickerSymbol: 'AAPL'}, function(err, result) {
         assert.ifError(err);
-        assert.equal(0, parseFloat(result.price));
+        assert.strictEqual(0, result.price);
         done();
       });
     });

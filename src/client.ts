@@ -4,16 +4,15 @@
  */
 
 import * as assert from 'assert';
-import BluebirdPromise from 'bluebird';
-import * as concatStream from 'concat-stream';
 import debugBuilder from 'debug';
 import { EventEmitter } from 'events';
+import getStream = require('get-stream');
 import { IncomingHttpHeaders } from 'http';
 import * as _ from 'lodash';
 import * as request from 'request';
-import { v4 as uuid4 } from 'uuid';
+import { v4 as uuidv4 } from 'uuid';
 import { HttpClient, Request } from './http';
-import { IHeaders, IOptions, ISecurity, SoapMethod } from './types';
+import { IHeaders, IHttpClient, IOptions, ISecurity, SoapMethod, SoapMethodAsync } from './types';
 import { findPrefix } from './utils';
 import { WSDL } from './wsdl';
 import { IPort, OperationElement, ServiceElement } from './wsdl/elements';
@@ -58,16 +57,17 @@ export class Client extends EventEmitter {
   public lastElapsedTime?: number;
 
   private wsdl: WSDL;
-  private httpClient: HttpClient;
-  private soapHeaders: string[];
+  private httpClient: IHttpClient;
+  private soapHeaders: any[];
   private httpHeaders: IHeaders;
   private bodyAttributes: string[];
   private endpoint: string;
   private security: ISecurity;
   private SOAPAction: string;
   private streamAllowed: boolean;
+  private returnSaxStream: boolean;
   private normalizeNames: boolean;
-  private readonly overridePromiseSuffix: string;
+  private overridePromiseSuffix: string;
 
   constructor(wsdl: WSDL, endpoint?: string, options?: IOptions) {
     super();
@@ -84,23 +84,19 @@ export class Client extends EventEmitter {
   }
 
   /** add soapHeader to soap:Header node */
-  public addSoapHeader(soapHeader: any, name?: string, namespace?: string, xmlns?: string): number {
+  public addSoapHeader(soapHeader: any, name?: string, namespace?: any, xmlns?: string): number {
     if (!this.soapHeaders) {
       this.soapHeaders = [];
     }
-    if (typeof soapHeader === 'object') {
-      soapHeader = this.wsdl.objectToXML(soapHeader, name, namespace, xmlns, true);
-    }
+    soapHeader = this._processSoapHeader(soapHeader, name, namespace, xmlns);
     return this.soapHeaders.push(soapHeader) - 1;
   }
 
-  public changeSoapHeader(index: number, soapHeader: any, name?: string, namespace?: string, xmlns?: string): void {
+  public changeSoapHeader(index: any, soapHeader: any, name?: any, namespace?: any, xmlns?: any): void {
     if (!this.soapHeaders) {
       this.soapHeaders = [];
     }
-    if (typeof soapHeader === 'object') {
-      soapHeader = this.wsdl.objectToXML(soapHeader, name, namespace, xmlns, true);
-    }
+    soapHeader = this._processSoapHeader(soapHeader, name, namespace, xmlns);
     this.soapHeaders[index] = soapHeader;
   }
 
@@ -126,7 +122,7 @@ export class Client extends EventEmitter {
   }
 
   public clearHttpHeaders(): void {
-    this.httpHeaders = {};
+    this.httpHeaders = null;
   }
 
   public addBodyAttribute(bodyAttribute: any, name?: string, namespace?: string, xmlns?: string): void {
@@ -183,7 +179,9 @@ export class Client extends EventEmitter {
 
   private _initializeOptions(options: IOptions) {
     this.streamAllowed = options.stream;
+    this.returnSaxStream = options.returnSaxStream;
     this.normalizeNames = options.normalizeNames;
+    this.overridePromiseSuffix = options.overridePromiseSuffix || 'Async';
     this.wsdl.options.attributesKey = options.attributesKey || 'attributes';
     this.wsdl.options.envelopeKey = options.envelopeKey || 'soap';
     this.wsdl.options.preserveWhitespace = !!options.preserveWhitespace;
@@ -222,11 +220,39 @@ export class Client extends EventEmitter {
     for (const name in methods) {
       def[name] = this._defineMethod(methods[name], location);
       const methodName = this.normalizeNames ? name.replace(nonIdentifierChars, '_') : name;
-      const method = def[name];
-      this[methodName] = method;
-      this[methodName + (this.overridePromiseSuffix || 'Async')] = BluebirdPromise.promisify(method, {multiArgs: true});
+      this[methodName] = def[name];
+      if (!nonIdentifierChars.test(methodName)) {
+        const suffix = this.overridePromiseSuffix;
+        this[methodName + suffix] = this._promisifyMethod(def[name]);
+      }
     }
     return def;
+  }
+
+  private _promisifyMethod(method: SoapMethod): SoapMethodAsync {
+    return (args: any, options?: any, extraHeaders?: any) => {
+      return new Promise((resolve, reject) => {
+        const callback = (
+          err: any,
+          result: any,
+          rawResponse: any,
+          soapHeader: any,
+          rawRequest: any,
+        ) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve([result, rawResponse, soapHeader, rawRequest]);
+          }
+        };
+        method(
+          args,
+          callback,
+          options,
+          extraHeaders,
+        );
+      });
+    };
   }
 
   private _defineMethod(method: OperationElement, location: string): SoapMethod {
@@ -251,6 +277,28 @@ export class Client extends EventEmitter {
     };
   }
 
+  private _processSoapHeader(soapHeader, name, namespace, xmlns) {
+    switch (typeof soapHeader) {
+    case 'object':
+      return this.wsdl.objectToXML(soapHeader, name, namespace, xmlns, true);
+    case 'function':
+      const _this = this;
+      // arrow function does not support arguments variable
+      // tslint:disable-next-line
+      return function() {
+        const result = soapHeader.apply(null, arguments);
+
+        if (typeof result === 'object') {
+          return _this.wsdl.objectToXML(result, name, namespace, xmlns, true);
+        } else {
+          return result;
+        }
+      };
+    default:
+      return soapHeader;
+    }
+  }
+
   private _invoke(method: OperationElement, args, location: string, callback, options, extraHeaders) {
     const name = method.$name;
     const input = method.input;
@@ -265,7 +313,7 @@ export class Client extends EventEmitter {
     let req: Request;
     let soapAction: string;
     const alias = findPrefix(defs.xmlns, ns);
-    const headers: any = {
+    let headers: any = {
       'Content-Type': 'text/xml; charset=utf-8',
     };
     let xmlnsSoap = 'xmlns:' + envelopeKey + '="http://schemas.xmlsoap.org/soap/envelope/"';
@@ -280,6 +328,13 @@ export class Client extends EventEmitter {
 
       // If it's not HTML and Soap Body is empty
       if (!obj.html && !obj.Body) {
+        if (response.statusCode >= 400) {
+          const error: ISoapError = new Error('Error http status codes');
+          error.response = response;
+          error.body = body;
+          this.emit('soapError', error, eid);
+          return callback(error, obj, body, obj.Header);
+        }
         return callback(null, obj, body, obj.Header);
       }
 
@@ -331,11 +386,6 @@ export class Client extends EventEmitter {
       return finish(obj, body, response);
     };
 
-    if (this.wsdl.options.forceSoap12Headers) {
-      headers['Content-Type'] = 'application/soap+xml; charset=utf-8';
-      xmlnsSoap = 'xmlns:' + envelopeKey + '="http://www.w3.org/2003/05/soap-envelope"';
-    }
-
     if (this.SOAPAction) {
       soapAction = this.SOAPAction;
     } else if (method.soapAction !== undefined && method.soapAction !== null) {
@@ -344,15 +394,22 @@ export class Client extends EventEmitter {
       soapAction = ((ns.lastIndexOf('/') !== ns.length - 1) ? ns + '/' : ns) + name;
     }
 
-    if (!this.wsdl.options.forceSoap12Headers) {
+    if (this.wsdl.options.forceSoap12Headers) {
+      headers['Content-Type'] = `application/soap+xml; charset=utf-8; action="${soapAction}"`;
+      xmlnsSoap = 'xmlns:' + envelopeKey + '="http://www.w3.org/2003/05/soap-envelope"';
+    } else {
       headers.SOAPAction = '"' + soapAction + '"';
     }
 
     options = options || {};
 
     // Add extra headers
-    for (const header in this.httpHeaders ) { headers[header] = this.httpHeaders[header];  }
-    for (const attr in extraHeaders) { headers[attr] = extraHeaders[attr]; }
+    if (this.httpHeaders === null) {
+      headers = {};
+    } else {
+      for (const header in this.httpHeaders) { headers[header] = this.httpHeaders[header];  }
+      for (const attr in extraHeaders) { headers[attr] = extraHeaders[attr]; }
+    }
 
     // Allow the security object to add headers
     if (this.security && this.security.addHeaders) {
@@ -371,16 +428,28 @@ export class Client extends EventEmitter {
       // pass `input.$lookupType` if `input.$type` could not be found
       message = this.wsdl.objectToDocumentXML(input.$name, args, input.targetNSAlias, input.targetNamespace, (input.$type || input.$lookupType));
     }
+
+    let decodedHeaders;
+    if (this.soapHeaders) {
+      decodedHeaders = this.soapHeaders.map((header) => {
+        if (typeof header === 'function') {
+          return header(method, location, soapAction, args);
+        } else {
+          return header;
+        }
+      }).join(' ');
+    }
+
     xml = '<?xml version="1.0" encoding="utf-8"?>' +
       '<' + envelopeKey + ':Envelope ' +
       xmlnsSoap + ' ' +
       'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" ' +
       encoding +
       this.wsdl.xmlnsInEnvelope + '>' +
-      ((this.soapHeaders || this.security) ?
+      ((decodedHeaders || this.security) ?
         (
-          '<' + envelopeKey + ':Header>' +
-          (this.soapHeaders ? this.soapHeaders.join('\n') : '') +
+          '<' + envelopeKey + ':Header' + (this.wsdl.xmlnsInHeader ? (' ' + this.wsdl.xmlnsInHeader) : '') + '>' +
+          (decodedHeaders ? decodedHeaders : '') +
           (this.security && !this.security.postProcess ? this.security.toXML() : '') +
           '</' + envelopeKey + ':Header>'
         )
@@ -407,7 +476,7 @@ export class Client extends EventEmitter {
     this.lastRequest = xml;
     this.lastEndpoint = location;
 
-    const eid: string = options.exchangeId || uuid4();
+    const eid: string = options.exchangeId || uuidv4();
 
     this.emit('message', message, eid);
     this.emit('request', xml, eid);
@@ -440,33 +509,39 @@ export class Client extends EventEmitter {
         // When the output element cannot be looked up in the wsdl, play it safe and
         // don't stream
         if (response.statusCode !== 200 || !output || !output.$lookupTypes) {
-          response.pipe(concatStream({encoding: 'string'}, (body) => {
+          getStream(response).then((body) => {
             this.lastResponse = body;
             this.lastResponseHeaders = response && response.headers;
             this.lastElapsedTime = Date.now() - startTime;
             this.emit('response', body, response, eid);
 
             return parseSync(body, response);
-
-          }));
+          });
           return;
         }
 
-        this.wsdl.xmlToObject(response, (error, obj) => {
-          this.lastResponse = response;
-          this.lastResponseHeaders = response && response.headers;
-          this.lastElapsedTime = Date.now() - startTime;
-          this.emit('response', '<stream>', response, eid);
+        if (this.returnSaxStream) {
+          // directly return the saxStream allowing the end user to define
+          // the parsing logics and corresponding errors managements
+          const saxStream = this.wsdl.getSaxStream(response);
+          return finish({ saxStream }, '<stream>', response);
+        } else {
+          this.wsdl.xmlToObject(response, (error, obj) => {
+            this.lastResponse = response;
+            this.lastResponseHeaders = response && response.headers;
+            this.lastElapsedTime = Date.now() - startTime;
+            this.emit('response', '<stream>', response, eid);
 
-          if (error) {
-            error.response = response;
-            error.body = '<stream>';
-            this.emit('soapError', error, eid);
-            return callback(error, response, undefined, undefined, xml);
-          }
+            if (error) {
+              error.response = response;
+              error.body = '<stream>';
+              this.emit('soapError', error, eid);
+              return callback(error, response, undefined, undefined, xml);
+            }
 
-          return finish(obj, '<stream>', response);
-        });
+            return finish(obj, '<stream>', response);
+          });
+        }
       });
       return;
     }

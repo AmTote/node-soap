@@ -25,6 +25,15 @@ describe('WSDL Parser (strict)', () => {
     });
   });
 
+  it("should catch incorrect wsdl", done => {
+    soap.createClient(__dirname + "/wsdl/bad2.txt", { strict: true }, function(
+      err
+    ) {
+      assert.notEqual(err, null);
+      done();
+    });
+  });
+
   it('should not give error as string', (done) => {
     soap.createClient(__dirname+'/wsdl/bad.txt', function(err) {
       assert.notEqual(typeof err, 'string');
@@ -38,6 +47,26 @@ describe('WSDL Parser (strict)', () => {
       assert.deepEqual(Object.keys(client.wsdl.definitions.schemas),
         ['http://example.com/', 'http://schemas.microsoft.com/2003/10/Serialization/Arrays']);
       assert.equal(typeof client.getLatestVersion, 'function');
+      done();
+    });
+  });
+
+  it('should support the overrideImportLocation option', (done) => {
+    const options = {
+      strict: true,
+      wsdl_options: {
+        overrideImportLocation: (location) => {
+          return location.replace('sub.wsdl', 'overridden.wsdl');
+        }
+      },
+      disableCache: true,
+    };
+
+    soap.createClient(__dirname+'/wsdl/wsdlImport/main.wsdl', options, function(err, client){
+      assert.ifError(err);
+      assert.deepEqual(Object.keys(client.wsdl.definitions.schemas),
+        ['http://example.com/', 'http://schemas.microsoft.com/2003/10/Serialization/Arrays']);
+      assert.equal(typeof client.getLatestVersionOverridden, 'function');
       done();
     });
   });
@@ -231,4 +260,50 @@ describe('WSDL Parser (non-strict)', () => {
       });
     });
   });
+
+  it('should describe recursive wsdl with extended elements', (done) => {
+    soap.createClient(__dirname+'/wsdl/extended_recursive.wsdl', function(err, client) {
+      assert.ifError(err);
+      var desc = client.describe();
+      var personDescription = desc.Service1.BasicHttpBinding_IService1.GetPerson.output.GetPersonResult;
+      assert.equal(personDescription, personDescription.Department.HeadOfDepartment);
+      done();
+    });
+  });
+
+  it('should describe referenced elements with type of the same name', (done) => {
+    soap.createClient(__dirname+'/wsdl/ref_element_same_as_type.wsdl', function(err, client) {
+      assert.ifError(err);
+      var desc = client.describe();
+      assert.equal(desc.MyService.MyPort.MyOperation.input.ExampleContent.MyID, 'xsd:string');
+      done();
+    });
+  });
+
+  it('should describe port type', (done) => {
+    soap.createClient(__dirname+'/wsdl/ref_element_same_as_type.wsdl', function(err, client) {
+      assert.ifError(err);
+      var desc = client.wsdl.definitions.portTypes.MyPortType.description(client.wsdl.definitions);
+      assert.equal(desc.MyOperation.input.ExampleContent.MyID, 'xsd:string');
+      done();
+    });
+  });
+
+  it('Should convert objects without prototypical chains to objects with prototypical chains', function () {
+    var noPrototypeObj = Object.create(null);
+    assert.ok(typeof noPrototypeObj.hasOwnProperty === 'undefined');
+    noPrototypeObj.a = 'a';
+    noPrototypeObj.b = 'b';
+    const xml = fs.readFileSync(__dirname + '/wsdl/binding_document.wsdl', 'utf8');
+    var processed = new WSDL(xml, __dirname + '/wsdl/binding_document.wsdl', {});
+    processed.definitions = {
+      schemas: {
+        foo: {}
+      }
+    };
+    var parsed = processed.objectToXML(noPrototypeObj, 'a', 'xsd', 'foo');
+    assert.equal(parsed, '<a>a</a><b>b</b>');
+  });
+
+
 });

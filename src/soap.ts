@@ -2,8 +2,6 @@
  * Copyright (c) 2011 Vinay Pulim <vinay@milewise.com>
  * MIT Licensed
  */
-
-import BluebirdPromise from 'bluebird';
 import debugBuilder from 'debug';
 import { Client } from './client';
 import * as _security from './security';
@@ -20,6 +18,7 @@ export { BasicAuthSecurity, BearerSecurity, ClientSSLSecurity, ClientSSLSecurity
 export { Server } from './server';
 export { passwordDigest } from './utils';
 export * from './types';
+export { WSDL } from './wsdl';
 
 type WSDLCallback = (error: any, result?: WSDL) => any;
 
@@ -84,11 +83,11 @@ export function createClient(url: string, p2: CreateClientCallback | IOptions, p
   });
 }
 
-export function createClientAsync(url: string, options: IOptions, endpoint?: string): BluebirdPromise<Client> {
+export function createClientAsync(url: string, options?: IOptions, endpoint?: string): Promise<Client> {
   if (typeof options === 'undefined') {
     options = {};
   }
-  return new BluebirdPromise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     createClient(url, options, (err, client) => {
       if (err) {
         reject(err);
@@ -98,9 +97,9 @@ export function createClientAsync(url: string, options: IOptions, endpoint?: str
   });
 }
 
-export function listen(server: ServerType, path: string, services: IServices, wsdl: string): Server;
+export function listen(server: ServerType, path: string, services: IServices, wsdl: string, callback?: (err: any, res: any) => void): Server;
 export function listen(server: ServerType, options: IServerOptions): Server;
-export function listen(server: ServerType, p2: string | IServerOptions, services?: IServices, xml?: string): Server {
+export function listen(server: ServerType, p2: string | IServerOptions, services?: IServices, xml?: string, callback?: (err: any, res: any) => void): Server {
   let options: IServerOptions;
   let path: string;
   let uri = '';
@@ -120,6 +119,7 @@ export function listen(server: ServerType, p2: string | IServerOptions, services
     options = {
       path: p2,
       services: services,
+      callback: callback,
     };
   }
 

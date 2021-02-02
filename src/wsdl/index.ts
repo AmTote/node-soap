@@ -16,26 +16,12 @@ import * as url from 'url';
 import { HttpClient } from '../http';
 import { NamespaceContext } from '../nscontext';
 import { IOptions } from '../types';
-import { findPrefix, splitQName, TNS_PREFIX } from '../utils';
+import { findPrefix, splitQName, TNS_PREFIX, xmlEscape } from '../utils';
 import * as elements from './elements';
 
 const debug = debugBuilder('node-soap');
 
-function xmlEscape(obj) {
-  if (typeof (obj) === 'string') {
-    if (obj.substr(0, 9) === '<![CDATA[' && obj.substr(-3) === ']]>') {
-      return obj;
-    }
-    return obj
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&apos;');
-  }
-
-  return obj;
-}
+const XSI_URI = 'http://www.w3.org/2001/XMLSchema-instance';
 
 const trimLeft = /^[\s\xA0]+/;
 const trimRight = /[\s\xA0]+$/;
@@ -46,7 +32,7 @@ function trim(text) {
 
 function deepMerge<A, B>(destination: A, source: B): A & B {
   return _.mergeWith(destination, source, (a, b) => {
-    return _.isArray(a) ? a.concat(b) : undefined;
+    return Array.isArray(a) ? a.concat(b) : undefined;
   });
 }
 
@@ -68,6 +54,7 @@ export class WSDL {
   public valueKey = '$value';
   public xmlKey = '$xml';
   public xmlnsInEnvelope: string;
+  public xmlnsInHeader: string;
   public uri: string;
   public definitions: elements.DefinitionsElement;
   public options: IInitializedOptions;
@@ -117,48 +104,52 @@ export class WSDL {
           return this.callback(err);
         }
 
-        this.definitions.deleteFixedAttrs();
-        const services = this.services = this.definitions.services;
-        if (services) {
-          for (name in services) {
-            services[name].postProcess(this.definitions);
-          }
-        }
-        const complexTypes = this.definitions.complexTypes;
-        if (complexTypes) {
-          for (name in complexTypes) {
-            complexTypes[name].deleteFixedAttrs();
-          }
-        }
-
-        // for document style, for every binding, prepare input message element name to (methodName, output message element name) mapping
-        const bindings = this.definitions.bindings;
-        for (const bindingName in bindings) {
-          const binding = bindings[bindingName];
-          if (typeof binding.style === 'undefined') {
-            binding.style = 'document';
-          }
-          if (binding.style !== 'document') {
-            continue;
-          }
-          const methods = binding.methods;
-          const topEls: elements.ITopElements = binding.topElements = {};
-          for (const methodName in methods) {
-            if (methods[methodName].input) {
-              const inputName = methods[methodName].input.$name;
-              let outputName = '';
-              if (methods[methodName].output ) {
-                outputName = methods[methodName].output.$name;
-              }
-              topEls[inputName] = {methodName: methodName, outputName: outputName};
+        try {
+          this.definitions.deleteFixedAttrs();
+          const services = this.services = this.definitions.services;
+          if (services) {
+            for (name in services) {
+              services[name].postProcess(this.definitions);
             }
           }
+          const complexTypes = this.definitions.complexTypes;
+          if (complexTypes) {
+            for (name in complexTypes) {
+              complexTypes[name].deleteFixedAttrs();
+            }
+          }
+
+          // for document style, for every binding, prepare input message element name to (methodName, output message element name) mapping
+          const bindings = this.definitions.bindings;
+          for (const bindingName in bindings) {
+            const binding = bindings[bindingName];
+            if (typeof binding.style === 'undefined') {
+              binding.style = 'document';
+            }
+            if (binding.style !== 'document') {
+              continue;
+            }
+            const methods = binding.methods;
+            const topEls: elements.ITopElements = binding.topElements = {};
+            for (const methodName in methods) {
+              if (methods[methodName].input) {
+                const inputName = methods[methodName].input.$name;
+                let outputName = '';
+                if (methods[methodName].output ) {
+                  outputName = methods[methodName].output.$name;
+                }
+                topEls[inputName] = {methodName: methodName, outputName: outputName};
+              }
+            }
+          }
+
+          // prepare soap envelope xmlns definition string
+          this.xmlnsInEnvelope = this._xmlnsMap();
+
+          this.callback(err, this);
+        } catch (e) {
+          this.callback(e);
         }
-
-        // prepare soap envelope xmlns definition string
-        this.xmlnsInEnvelope = this._xmlnsMap();
-
-        this.callback(err, this);
       });
 
     });
@@ -193,6 +184,13 @@ export class WSDL {
 
   public toXML() {
     return this.xml || '';
+  }
+
+  public getSaxStream(xml) {
+    const saxStream = sax.createStream(true, null);
+    xml.pipe(saxStream);
+
+    return saxStream;
   }
 
   public xmlToObject(xml, callback?) {
@@ -305,7 +303,7 @@ export class WSDL {
 
       for (attributeName in elementAttributes) {
         const res = splitQName(attributeName);
-        if (res.name === 'nil' && xmlns[res.prefix] === 'http://www.w3.org/2001/XMLSchema-instance' && elementAttributes[attributeName] &&
+        if (res.name === 'nil' && xmlns[res.prefix] === XSI_URI && elementAttributes[attributeName] &&
             (elementAttributes[attributeName].toLowerCase() === 'true' || elementAttributes[attributeName] === '1')
           ) {
           hasNilAttribute = true;
@@ -319,7 +317,15 @@ export class WSDL {
 
       // Pick up the schema for the type specified in element's xsi:type attribute.
       let xsiTypeSchema;
-      const xsiType = elementAttributes['xsi:type'];
+      let xsiType;
+
+      for (const prefix in xmlns) {
+        if (xmlns[prefix] === XSI_URI && (`${prefix}:type` in elementAttributes)) {
+          xsiType = elementAttributes[`${prefix}:type`];
+          break;
+        }
+      }
+
       if (xsiType) {
         const type = splitQName(xsiType);
         let typeURI;
@@ -432,6 +438,8 @@ export class WSDL {
       } else {
         if (name === 'int' || name === 'integer') {
           value = parseInt(text, 10);
+        } else if (name === 'double' || name === 'float' || name === 'decimal') {
+          value = Number(text);
         } else if (name === 'bool' || name === 'boolean') {
           value = text.toLowerCase() === 'true' || text === '1';
         } else if (name === 'dateTime' || name === 'date') {
@@ -487,7 +495,7 @@ export class WSDL {
       for (const n in refs) {
         const ref = refs[n];
         for (const href of ref.hrefs) {
-          _.assign(href.obj, ref.obj);
+          Object.assign(href.obj, ref.obj);
         }
       }
 
@@ -729,6 +737,10 @@ export class WSDL {
       }
     } else if (typeof obj === 'object') {
       for (name in obj) {
+        // Happens when Object.create(null) is used, it will not inherit the Object prototype
+        if (!obj.hasOwnProperty) {
+          obj = Object.assign({}, obj);
+        }
         if (!obj.hasOwnProperty(name)) { continue; }
         // don't process attributes as element
         if (name === this.options.attributesKey) {
@@ -931,7 +943,7 @@ export class WSDL {
   public processAttributes(child: any, nsContext: NamespaceContext): string {
     let attr = '';
 
-    if (child === null) {
+    if (child === null || child === undefined) {
       child = [];
     }
 
@@ -1157,13 +1169,22 @@ export class WSDL {
     }
 
     let includePath: string;
-    if (!/^https?:/.test(this.uri) && !/^https?:/.test(include.location)) {
-      includePath = path.resolve(path.dirname(this.uri), include.location);
+    if (!/^https?:/i.test(this.uri) && !/^https?:/i.test(include.location)) {
+      const isFixed = (this.options.wsdl_options !== undefined && this.options.wsdl_options.hasOwnProperty('fixedPath')) ? this.options.wsdl_options.fixedPath : false;
+      if (isFixed) {
+        includePath = path.resolve(path.dirname(this.uri), path.parse(include.location).base);
+      } else {
+        includePath = path.resolve(path.dirname(this.uri), include.location);
+      }
     } else {
       includePath = url.resolve(this.uri || '', include.location);
     }
 
-    const options = _.assign({}, this.options);
+    if (this.options.wsdl_options !== undefined && typeof this.options.wsdl_options.overrideImportLocation === 'function') {
+      includePath = this.options.wsdl_options.overrideImportLocation(includePath);
+    }
+
+    const options = Object.assign({}, this.options);
     // follow supplied ignoredNamespaces option
     options.ignoredNamespaces = this._originalIgnoredNamespaces || this.options.ignoredNamespaces;
     options.WSDL_CACHE = this.WSDL_CACHE;
@@ -1356,7 +1377,7 @@ export function open_wsdl(uri: any, p2: WSDLCallback | IOptions, p3?: WSDLCallba
   const request_options = options.wsdl_options;
 
   let wsdl: WSDL;
-  if (!/^https?:/.test(uri)) {
+  if (!/^https?:/i.test(uri)) {
     debug('Reading file: %s', uri);
     fs.readFile(uri, 'utf8', (err, definition) => {
       if (err) {

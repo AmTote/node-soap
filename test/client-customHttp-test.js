@@ -15,7 +15,7 @@ var fs = require('fs'),
   should = require('should');
 
 it('should allow customization of httpClient and the wsdl file download should pass through it', function(done) {
-  
+
 //Make a custom http agent to use streams instead on net socket
   function CustomAgent(options, socket){
     var self = this;
@@ -26,15 +26,15 @@ it('should allow customization of httpClient and the wsdl file download should p
     self.options = options || {};
     self.proxyOptions = {};
   }
-  
+
   util.inherits(CustomAgent, events.EventEmitter);
-    
+
   CustomAgent.prototype.addRequest = function(req, options) {
     req.onSocket(this.proxyStream);
   };
 
-  //Create a duplex stream 
-    
+  //Create a duplex stream
+
   var httpReqStream = new stream.PassThrough();
   var httpResStream = new stream.PassThrough();
   var socketStream = duplexer(httpReqStream, httpResStream);
@@ -49,14 +49,14 @@ it('should allow customization of httpClient and the wsdl file download should p
   socketStream.destroy = function() {
   };
 
-  //Custom httpClient  
+  //Custom httpClient
   function MyHttpClient (options, socket){
     httpClient.call(this,options);
     this.agent = new CustomAgent(options, socket);
   }
-    
+
   util.inherits(MyHttpClient, httpClient);
-    
+
   MyHttpClient.prototype.request = function(rurl, data, callback, exheaders, exoptions) {
     var self = this;
     var options = self.buildRequest(rurl, data, exheaders, exoptions);
@@ -75,13 +75,13 @@ it('should allow customization of httpClient and the wsdl file download should p
     }
     return req;
   };
-  
+
   var wsdl = fs.readFileSync('./test/wsdl/default_namespace.wsdl').toString('utf8');
-  //Should be able to read from stream the request 
+  //Should be able to read from stream the request
   httpReqStream.once('readable', function readRequest() {
     var chunk = httpReqStream.read();
     should.exist(chunk);
-    
+
     //This is for compatibility with old node releases <= 0.10
     //Hackish
     if(semver.lt(process.version, '0.11.0'))
@@ -108,8 +108,10 @@ it('should allow customization of httpClient and the wsdl file download should p
           MyServicePort: {
             MyOperation: {
               input: {
+                parameter: {}
               },
               output: {
+                parameter: {}
               }
             }
           }

@@ -14,11 +14,13 @@
     "no-unused-expression": false,
     "no-shadowed-variable": false,
     "object-literal-shorthand": false,
+    "no-angle-bracket-type-assertion": false,
     "max-classes-per-file": false,
     "no-empty": false,
     "no-conditional-assignment": false,
     "no-bitwise": false,
-    "no-console": false
+    "no-console": false,
+    "whitespace": false
   },
   "rulesDirectory": []
 }

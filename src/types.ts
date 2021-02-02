@@ -1,9 +1,16 @@
-
 import req from 'request';
-import { HttpClient } from './http';
 
 export interface IHeaders {
   [k: string]: any;
+}
+
+export interface IExOptions {
+  [key: string]: any;
+}
+
+export interface IHttpClient {
+  request(rurl: string, data: any, callback: (error: any, res?: any, body?: any) => any, exheaders?: IHeaders, exoptions?: IExOptions, caller?);
+  requestStream?(rurl: string, data: any, exheaders?: IHeaders, exoptions?: IExOptions, caller?): req.Request;
 }
 
 /** @deprecated use SoapMethod */
@@ -15,7 +22,13 @@ export type SoapMethod = (
   extraHeaders?: any,
 ) => void;
 
-export type ISoapServiceMethod = (args: any, callback?: (data: any) => void, headers?: any, req?: any) => any;
+export type SoapMethodAsync = (
+  args: any,
+  options?: any,
+  extraHeaders?: any,
+) => Promise<[any, any, any, any]>;
+
+export type ISoapServiceMethod = (args: any, callback?: (data: any) => void, headers?: any, req?: any, res?: any, sender?: any) => any;
 
 // SOAP Fault 1.1 & 1.2
 export interface ISoapFaultError {
@@ -92,6 +105,8 @@ export interface IWsdlBaseOptions {
   wsdl_headers?: { [key: string]: any };
   /** custom options for the request module on WSDL requests. */
   wsdl_options?: { [key: string]: any };
+  /** set proper headers for SOAP v1.2. */
+  forceSoap12Headers?: boolean;
 }
 
 /** @deprecated use IOptions */
@@ -104,13 +119,13 @@ export interface IOptions extends IWsdlBaseOptions {
   /** set specific key instead of <pre><soap:Body></soap:Body></pre>. */
   envelopeKey?: string;
   /** provide your own http client that implements request(rurl, data, callback, exheaders, exoptions) */
-  httpClient?: HttpClient;
+  httpClient?: IHttpClient;
   /** override the request module. */
   request?: req.RequestAPI<req.Request, req.CoreOptions, req.RequiredUriUrl>;
   stream?: boolean;
+  // allows returning the underlying saxStream that parse the SOAP XML response
+  returnSaxStream?: boolean;
   // wsdl options that only work for client
-  /** set proper headers for SOAP v1.2. */
-  forceSoap12Headers?: boolean;
   customDeserializer?: any;
   /** if your wsdl operations contains names with Async suffix, you will need to override the default promise suffix to a custom one, default: Async. */
   overridePromiseSuffix?: string;
@@ -128,6 +143,7 @@ export interface IServerOptions extends IWsdlBaseOptions {
   services: IServices;
   xml?: string;
   uri?: string;
+  callback?: (err: any, res: any) => void;
   /** suppress the full stack trace for error messages. */
   suppressStack?: boolean;
   oneWay?: IOneWayOptions;
